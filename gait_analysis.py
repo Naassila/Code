@@ -10,12 +10,20 @@ from gaitmap.trajectory_reconstruction import StrideLevelTrajectory, RegionLevel
 from gaitmap.parameters import TemporalParameterCalculation
 from gaitmap.parameters import SpatialParameterCalculation
 import matplotlib.pyplot as plt
+import socket
 
 np.random.seed(0)
 
 example_dataset = get_healthy_example_imu_data_not_rotated()
-data_set = pd.read_csv('D:\\Multiple_Sclerosis\\Gait_dual_task\\Raw_data\\test_data_H\\sensors\\20210430-083735_Walk'
-                       '.csv', sep='\t')
+station = socket.gethostname()
+if station == 'Laptop_naas':
+    path_data = 'C:\\Users\\Nassila\\Documents\\Projects\\Multiple_sclerosis\\Dual_task\\Raw_data\\test_data_H\\sensors\\20210430-083735_Walk.csv'
+elif station == 'w10lloppici':
+    path_data = 'D:\\Multiple_Sclerosis\\Gait_dual_task\\Raw_data\\test_data_H\\sensors\\20210430-083735_Walk.csv'
+else:
+    raise ValueError('No idea where the raw data is')
+
+data_set = pd.read_csv(path_data, sep='\t')
 sampling_rate_hz = 1/data_set.time[1] #204.8
 data_set_foot = data_set[[icol for icol in data_set.columns if 'Foot' in icol or icol=='time']]
 
@@ -45,30 +53,32 @@ dataset_sf_al_to_gr = sensor_alignment.align_dataset_to_gravity(
 )
 
 # --------------------- Stride Segmentation
-dtw = BarthDtw()
+dtw = BarthDtw( max_cost=3.8, min_match_length_s=0.7, max_match_length_s=1.3)
 # Convert data to foot-frame
 bf_data = convert_to_fbf(dataset_sf_al_to_gr, left_like="Left", right_like="Right")
 dtw = dtw.segment(data=bf_data, sampling_rate_hz=sampling_rate_hz)
 
 # Check detected strides
-sensor = "Left Foot"
-fig, axs = plt.subplots(nrows=3, sharex=True, figsize=(10, 5))
-dtw.data[sensor]["gyr_ml"].reset_index(drop=True).plot(ax=axs[0])
-axs[0].set_ylabel("gyro [deg/s]")
-axs[1].plot(dtw.cost_function_[sensor])
-axs[1].set_ylabel("dtw cost [a.u.]")
-axs[1].axhline(dtw.max_cost, color="k", linestyle="--")
-axs[2].imshow(dtw.acc_cost_mat_[sensor], aspect="auto")
-axs[2].set_ylabel("template position [#]")
-for p in dtw.paths_[sensor]:
-    axs[2].plot(p.T[1], p.T[0])
-for s in dtw.matches_start_end_original_[sensor]:
-    axs[1].axvspan(*s, alpha=0.3, color="g")
-for _, s in dtw.stride_list_[sensor][["start", "end"]].iterrows():
-    axs[0].axvspan(*s, alpha=0.3, color="g")
+fig, axs = plt.subplots(nrows=3, ncols=2,  sharex=True, figsize=(10, 5))
+for i, sensor in enumerate(["Left Foot", "Right Foot"]):
+    dtw.data[sensor]["gyr_ml"].reset_index(drop=True).plot(ax=axs[0, i])
+    axs[0, i].set_ylabel("gyro [deg/s]")
+    axs[1, i].plot(dtw.cost_function_[sensor])
+    axs[1, i].set_ylabel("dtw cost [a.u.]")
+    axs[1, i].axhline(dtw.max_cost, color="k", linestyle="--")
+    axs[2, i].imshow(dtw.acc_cost_mat_[sensor], aspect="auto")
+    axs[2, i].set_ylabel("template position [#]")
+    for p in dtw.paths_[sensor]:
+        axs[2, i].plot(p.T[1], p.T[0])
+    for s in dtw.matches_start_end_original_[sensor]:
+        axs[1, i].axvspan(*s, alpha=0.3, color="g")
+    for _, s in dtw.stride_list_[sensor][["start", "end"]].iterrows():
+        axs[0, i].axvspan(*s, alpha=0.3, color="g")
 
-axs[0].set_xlabel("time [#]")
+    axs[0, i].set_xlabel("time [#]")
+    axs[0, i].set_title(sensor)
 fig.tight_layout()
+plt.show()
 
 # --------------------- Event detection
 ed = RamppEventDetection()
@@ -108,7 +118,8 @@ plt.legend(loc="best")
 fig.tight_layout()
 
 # --------------------- Trajectory Reconstruction
-regions_list = {k: pd.DataFrame([dtw.stride_list_[k].values.flatten()[[0, -1]]], columns=["start", "end"]).rename_axis(
+regions_list = {k: pd.DataFrame([dtw.stride_list_[k].values.flatten()[[0, 15]],
+                                 dtw.stride_list_[k].values.flatten()[[16, -1]]], columns=["start", "end"]).rename_axis(
     "gs_id") for k in ['Left Foot', 'Right Foot']}
 trajectory_full_method = RtsKalman()
 trajectory = StrideLevelTrajectory()
@@ -126,11 +137,16 @@ trajectory_full.estimate(
     regions_of_interest=regions_list,
     sampling_rate_hz=sampling_rate_hz)
 fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-left_foot = trajectory_full.position_['Left Foot'].values.T
-right_foot = trajectory_full.position_['Right Foot'].values.T
-ax.scatter(left_foot[0], left_foot[1],zs=left_foot[2])
-ax.scatter(right_foot[0], right_foot[1],zs=right_foot[2])
+ax = fig.add_subplot(211, projection='3d')
+left_foot_0 = trajectory_full.position_['Left Foot'].loc[0].values.T
+right_foot_0 = trajectory_full.position_['Right Foot'].loc[0].values.T
+left_foot_1 = trajectory_full.position_['Left Foot'].loc[1].values.T
+right_foot_1 = trajectory_full.position_['Right Foot'].loc[1].values.T
+ax.scatter(left_foot_0[0], left_foot_0[1],zs=left_foot_0[2])
+ax.scatter(right_foot_0[0], right_foot_0[1],zs=right_foot_0[2])
+axr = fig.add_subplot(212, projection='3d')
+axr.scatter(left_foot_1[0], left_foot_1[1],zs=left_foot_1[2])
+axr.scatter(right_foot_1[0], right_foot_1[1],zs=right_foot_1[2])
 
 # --------------------- Temporal Parameter Calculation
 temporal_paras = TemporalParameterCalculation()
