@@ -10,7 +10,9 @@ from gaitmap.trajectory_reconstruction import StrideLevelTrajectory, RegionLevel
 from gaitmap.parameters import TemporalParameterCalculation
 from gaitmap.parameters import SpatialParameterCalculation
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import socket
+import itertools
 
 np.random.seed(0)
 
@@ -26,7 +28,7 @@ else:
 data_set = pd.read_csv(path_data, sep='\t')
 sampling_rate_hz = 1/data_set.time[1] #204.8
 data_set_foot = data_set[[icol for icol in data_set.columns if 'Foot' in icol or icol=='time']]
-
+time = data_set_foot.time.values
 dst = data_set_foot.set_index('time')
 dst.columns = pd.MultiIndex.from_arrays(np.transpose([i.split('/') for i in dst.columns]),
                                            names=['sensor', 'axis'])
@@ -60,22 +62,23 @@ dtw = dtw.segment(data=bf_data, sampling_rate_hz=sampling_rate_hz)
 
 # Check detected strides
 fig, axs = plt.subplots(nrows=3, ncols=2,  sharex=True, figsize=(10, 5))
-for i, sensor in enumerate(["Left Foot", "Right Foot"]):
-    dtw.data[sensor]["gyr_ml"].reset_index(drop=True).plot(ax=axs[0, i])
+foot_laterality = ["Left Foot", "Right Foot"]
+for i, sensor in enumerate(foot_laterality):
+    axs[0, i].plot(time, dtw.data[sensor]["gyr_ml"].reset_index(drop=True))
     axs[0, i].set_ylabel("gyro [deg/s]")
-    axs[1, i].plot(dtw.cost_function_[sensor])
+    axs[1, i].plot(time, dtw.cost_function_[sensor])
     axs[1, i].set_ylabel("dtw cost [a.u.]")
     axs[1, i].axhline(dtw.max_cost, color="k", linestyle="--")
-    axs[2, i].imshow(dtw.acc_cost_mat_[sensor], aspect="auto")
+    axs[2, i].imshow(dtw.acc_cost_mat_[sensor], aspect="auto", extent=[0, time[-1], 120, 0])
     axs[2, i].set_ylabel("template position [#]")
     for p in dtw.paths_[sensor]:
-        axs[2, i].plot(p.T[1], p.T[0])
+        axs[2, i].plot(p.T[1]/sampling_rate_hz, p.T[0])
     for s in dtw.matches_start_end_original_[sensor]:
-        axs[1, i].axvspan(*s, alpha=0.3, color="g")
+        axs[1, i].axvspan(*s/sampling_rate_hz, alpha=0.3, color="g")
     for _, s in dtw.stride_list_[sensor][["start", "end"]].iterrows():
-        axs[0, i].axvspan(*s, alpha=0.3, color="g")
+        axs[0, i].axvspan(*s/sampling_rate_hz, alpha=0.3, color="g")
 
-    axs[0, i].set_xlabel("time [#]")
+    axs[2, i].set_xlabel("time [s]")
     axs[0, i].set_title(sensor)
 fig.tight_layout()
 plt.show()
@@ -85,35 +88,41 @@ ed = RamppEventDetection()
 ed = ed.detect(data=bf_data, stride_list=dtw.stride_list_, sampling_rate_hz=sampling_rate_hz)
 
 # Check detected events
-fig, (ax1, ax2) = plt.subplots(2, sharex=True, figsize=(10, 5))
-ax1.plot(bf_data.reset_index(drop=True)["Left Foot"][["gyr_ml"]])
-ax2.plot(bf_data.reset_index(drop=True)["Left Foot"][["acc_pa"]])
+fig, [[ax1l, ax1r], [ax2l, ax2r]] = plt.subplots(nrows=2, ncols=2, sharex=True, figsize=(10, 5))
+ax1l.plot(time, bf_data.reset_index(drop=True)["Left Foot"][["gyr_ml"]])
+ax2l.plot(time, bf_data.reset_index(drop=True)["Left Foot"][["acc_pa"]])
+ax1r.plot(time, bf_data.reset_index(drop=True)["Right Foot"][["gyr_ml"]])
+ax2r.plot(time, bf_data.reset_index(drop=True)["Right Foot"][["acc_pa"]])
 
-ic_idx = ed.min_vel_event_list_["Left Foot"]["ic"].to_numpy().astype(int)
-tc_idx = ed.min_vel_event_list_["Left Foot"]["tc"].to_numpy().astype(int)
-min_vel_idx = ed.min_vel_event_list_["Left Foot"]["min_vel"].to_numpy().astype(int)
+ic_idx= [ed.min_vel_event_list_[k]["ic"].to_numpy().astype(int) for k in ["Left Foot", "Right Foot"]]
+tc_idx = [ed.min_vel_event_list_[k]["tc"].to_numpy().astype(int) for k in ["Left Foot", "Right Foot"]]
+min_vel_idx = [ed.min_vel_event_list_[k]["min_vel"].to_numpy().astype(int) for k in ["Left Foot", "Right Foot"]]
 
-for ax, sensor in zip([ax1, ax2], ["gyr_ml", "acc_pa"]):
-    for i, stride in ed.min_vel_event_list_["Left Foot"].iterrows():
-        ax.axvline(stride["start"], color="g")
-        ax.axvline(stride["end"], color="r")
+for iside, side in enumerate([[ax1l, ax2l], [ax1r, ax2r]]):
+    for ax, sensor in zip(side, ["gyr_ml", "acc_pa"]):
+        for i, stride in ed.min_vel_event_list_[foot_laterality[iside]].iterrows():
+            ax.axvline(stride["start"]/sampling_rate_hz, color="g")
+            ax.axvline(stride["end"]/sampling_rate_hz, color="r")
 
-    ax.scatter(ic_idx, bf_data["Left Foot"][sensor].to_numpy()[ic_idx],marker="*",s=100,
-               color="r", zorder=3, label="ic",
-    )
+        ax.scatter(ic_idx[iside]/sampling_rate_hz, bf_data[foot_laterality[iside]][sensor].to_numpy()[ic_idx[iside]],marker="*",s=100,
+                   color="r", zorder=3, label="ic",
+        )
 
-    ax.scatter( tc_idx, bf_data["Left Foot"][sensor].to_numpy()[tc_idx], marker="p", s=50,
-                color="g", zorder=3, label="tc",
-    )
+        ax.scatter(tc_idx[iside]/sampling_rate_hz, bf_data[foot_laterality[iside]][sensor].to_numpy()[tc_idx[iside]], marker="p", s=50,
+                   color="g", zorder=3, label="tc",
+                   )
 
-    ax.scatter(min_vel_idx, bf_data["Left Foot"][sensor].to_numpy()[min_vel_idx], marker="s", s=50,
-               color="y", zorder=3, label="min_vel",
-    )
-    ax.grid(True)
+        ax.scatter(min_vel_idx[iside]/sampling_rate_hz, bf_data[foot_laterality[iside]][sensor].to_numpy()[min_vel_idx[iside]],
+                   marker="s", s=50,
+                   color="y", zorder=3, label="min_vel",
+                   )
 
-ax1.set_title("Events of min_vel strides")
-ax1.set_ylabel("gyr_ml (°/s)")
-ax2.set_ylabel("acc_pa [m/s^2]")
+        ax.grid(True)
+    side[0].set_title(f"Events of min_vel strides for the {foot_laterality[iside]}")
+ax1l.set_ylabel("gyr_ml (°/s)")
+ax2l.set_ylabel("acc_pa [m/s^2]")
+ax2l.set_xlabel('Time [s]')
+ax2r.set_xlabel('Time [s]')
 plt.legend(loc="best")
 fig.tight_layout()
 
@@ -137,16 +146,39 @@ trajectory_full.estimate(
     regions_of_interest=regions_list,
     sampling_rate_hz=sampling_rate_hz)
 fig = plt.figure()
-ax = fig.add_subplot(211, projection='3d')
-left_foot_0 = trajectory_full.position_['Left Foot'].loc[0].values.T
-right_foot_0 = trajectory_full.position_['Right Foot'].loc[0].values.T
-left_foot_1 = trajectory_full.position_['Left Foot'].loc[1].values.T
-right_foot_1 = trajectory_full.position_['Right Foot'].loc[1].values.T
-ax.scatter(left_foot_0[0], left_foot_0[1],zs=left_foot_0[2])
-ax.scatter(right_foot_0[0], right_foot_0[1],zs=right_foot_0[2])
-axr = fig.add_subplot(212, projection='3d')
-axr.scatter(left_foot_1[0], left_foot_1[1],zs=left_foot_1[2])
-axr.scatter(right_foot_1[0], right_foot_1[1],zs=right_foot_1[2])
+axl = fig.add_subplot(121, projection='3d')
+axr = fig.add_subplot(122, projection='3d')
+
+for i, ax in enumerate([axl, axr]): #foot_laterality):
+    data_go = trajectory_full.position_[foot_laterality[i]].loc[0].values.T
+    data_back = trajectory_full.position_[foot_laterality[i]].loc[1].values.T
+    strides = dtw.stride_list_[foot_laterality[i]]
+    strides_go = strides[strides.start<regions_list[foot_laterality[i]].end[0]]
+    strides_back = strides[strides.start>regions_list[foot_laterality[i]].start[1]].reset_index(drop=True)
+    strides_go -= strides_go.start[0]
+    strides_back -= strides_back.start[0]
+
+    colors = iter(cm.rainbow(np.linspace(0, 1, len(strides_go)+len(strides_back))))
+    for istride in strides_go.iterrows():
+        ax.scatter(data_go[0][istride[1].start: istride[1].end],
+                   data_go[1][istride[1].start: istride[1].end],
+                   data_go[2][istride[1].start: istride[1].end], color=next(colors))
+    for istride in strides_back.iterrows():
+        ax.scatter(data_back[0][istride[1].start: istride[1].end],
+                   data_back[1][istride[1].start: istride[1].end],
+                   data_back[2][istride[1].start: istride[1].end], color=next(colors))
+# #         plt.scatter(x, y, color=c)
+# # for istride in ed.min_vel_event_list_:
+# #     test
+# left_foot_0 = trajectory_full.position_['Left Foot'].loc[0].values.T
+# right_foot_0 = trajectory_full.position_['Right Foot'].loc[0].values.T
+# left_foot_1 = trajectory_full.position_['Left Foot'].loc[1].values.T
+# right_foot_1 = trajectory_full.position_['Right Foot'].loc[1].values.T
+# ax.scatter(left_foot_0[0], left_foot_0[1],zs=left_foot_0[2])
+# ax.scatter(right_foot_0[0], right_foot_0[1],zs=right_foot_0[2])
+#
+# axr.scatter(left_foot_1[0], left_foot_1[1],zs=left_foot_1[2])
+# axr.scatter(right_foot_1[0], right_foot_1[1],zs=right_foot_1[2])
 
 # --------------------- Temporal Parameter Calculation
 temporal_paras = TemporalParameterCalculation()
