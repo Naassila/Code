@@ -1,20 +1,27 @@
 import h5py
-import opensim as osim
+# import opensim as osim
 from pathlib import Path
 import os
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import socket
 
+station = socket.gethostname()
+if station == 'Laptop_naas':
+    project_path = 'C:\\Users\\Nassila\\Documents\\Projects\\Multiple_sclerosis\\Dual_task\\'
+elif station == 'w10lloppici':
+    project_path = 'D:\\Multiple_Sclerosis\\Gait_dual_task\\'
+else:
+    raise ValueError('No idea where the raw data is')
+# project_path= 'D:\Multiple_Sclerosis\Gait_dual_task'
+# mobilityLab_settings = osim.APDMDataReaderSettings(f"{project_path}/results/_templates/IMU_Mappings.xml")
+# mobLab = osim.APDMDataReader(mobilityLab_settings)
 
-project_path= 'D:\Multiple_Sclerosis\Gait_dual_task'
-mobilityLab_settings = osim.APDMDataReaderSettings(f"{project_path}/results/_templates/IMU_Mappings.xml")
-mobLab = osim.APDMDataReader(mobilityLab_settings)
-
-trials = [ifile for ifile in (Path(project_path) / 'Raw_data/test_data_H').glob("*.H5")]
+trials = [ifile for ifile in (Path(project_path) / 'Raw_data/test_data_H').glob("*.H5") if ifile.stem.endswith('Walk')]
 save_acc_gyro = True
 
-for trial in trials[:]:
+for trial in trials[-1:]:
     h5f = h5py.File(str(trial), 'r')
     quat = {}
     acc = {}
